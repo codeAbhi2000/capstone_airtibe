@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  free
+  paid
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  plan               Plan     @default(free)
+  stripeCustomerId   String?  @unique
+  stripeSubId        String?
+  draftsUsedMonth    Int      @default(0)
+  billingPeriodStart DateTime @default(now())
+
+  @@map("users")
+}
+
+model EmailDraft {
+  id String @id @default(uuid())
+
+  @@map("email_drafts")
+}
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  @@map("audit_logs")
+}

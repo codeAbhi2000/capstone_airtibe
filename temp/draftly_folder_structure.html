@@ -1,0 +1,370 @@
+
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--font-mono,monospace);font-size:13px;color:var(--color-text-primary);padding:0}
+  .root{padding:16px 0}
+  .tabs{display:flex;gap:4px;padding:0 16px 0;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:0}
+  .tab{padding:7px 14px;font-size:12px;font-family:var(--font-sans,system-ui);cursor:pointer;border:none;background:none;color:var(--color-text-secondary);border-bottom:2px solid transparent;margin-bottom:-0.5px;border-radius:4px 4px 0 0;transition:all .15s}
+  .tab:hover{color:var(--color-text-primary);background:var(--color-background-secondary)}
+  .tab.active{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);font-weight:500}
+  .panel{display:none;padding:12px 16px}
+  .panel.active{display:block}
+
+  /* tree */
+  .tree{line-height:1.75}
+  .row{display:flex;align-items:baseline;gap:0;cursor:default;border-radius:4px;padding:0 4px;transition:background .1s;white-space:nowrap}
+  .row:hover{background:var(--color-background-secondary)}
+  .row.clickable{cursor:pointer}
+  .indent{display:inline-block;width:20px;flex-shrink:0;color:var(--color-border-secondary);font-size:11px;text-align:center}
+  .branch{display:inline-block;width:20px;flex-shrink:0;color:var(--color-border-secondary);font-size:11px;user-select:none}
+  .icon{width:16px;flex-shrink:0;font-size:13px;margin-right:4px}
+  .name{font-size:12.5px}
+  .name.dir{font-weight:500;color:var(--color-text-primary)}
+  .name.file{color:var(--color-text-secondary)}
+  .name.entry{color:var(--color-text-primary)}
+  .badge{font-size:10px;font-family:var(--font-sans,system-ui);margin-left:8px;padding:1px 6px;border-radius:99px;font-weight:600;white-space:nowrap}
+  .b-blue{background:var(--color-background-info);color:var(--color-text-info)}
+  .b-teal{background:#E1F5EE;color:#0F6E56}
+  .b-amber{background:#FAEEDA;color:#854F0B}
+  .b-purple{background:#EEEDFE;color:#534AB7}
+  .b-coral{background:#FAECE7;color:#993C1D}
+  .b-green{background:#EAF3DE;color:#3B6D11}
+  .b-gray{background:var(--color-background-secondary);color:var(--color-text-secondary)}
+  @media(prefers-color-scheme:dark){
+    .b-teal{background:#085041;color:#9FE1CB}
+    .b-amber{background:#412402;color:#FAC775}
+    .b-purple{background:#26215C;color:#CECBF6}
+    .b-coral{background:#4A1B0C;color:#F5C4B3}
+    .b-green{background:#173404;color:#C0DD97}
+  }
+  .detail{font-size:11px;font-family:var(--font-sans,system-ui);color:var(--color-text-tertiary);margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toggle{color:var(--color-text-tertiary);font-size:10px;width:14px;flex-shrink:0;margin-right:2px;transition:transform .15s}
+  .toggle.open{transform:rotate(90deg)}
+  .children{}
+  .children.hidden{display:none}
+
+  /* tooltip */
+  .tip{position:fixed;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:8px 12px;font-size:11px;font-family:var(--font-sans,system-ui);color:var(--color-text-secondary);max-width:220px;line-height:1.5;pointer-events:none;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.12);display:none}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-top:0.5px solid var(--color-border-tertiary)}
+  .leg-item{display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-sans);color:var(--color-text-secondary)}
+  .leg-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+</style>
+
+<div class="root">
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('all')">Full structure</button>
+    <button class="tab" onclick="switchTab('fe')">Frontend</button>
+    <button class="tab" onclick="switchTab('node')">Node service</button>
+    <button class="tab" onclick="switchTab('py')">Python AI service</button>
+  </div>
+
+  <div class="panel active" id="tab-all">
+    <div class="tree" id="tree-all"></div>
+  </div>
+  <div class="panel" id="tab-fe">
+    <div class="tree" id="tree-fe"></div>
+  </div>
+  <div class="panel" id="tab-node">
+    <div class="tree" id="tree-node"></div>
+  </div>
+  <div class="panel" id="tab-py">
+    <div class="tree" id="tree-py"></div>
+  </div>
+
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#3B8BD4"></div>Frontend (Next.js)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#534AB7"></div>Node service (I/O)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#0F6E56"></div>Python AI service</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#854F0B"></div>Shared / infra</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#888780"></div>Config / root</div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const FI = '📄', DI = '📁', TS = '🟦', PY = '🐍', ENV = '⚙️', DOC = '📋', DOCK = '🐳', TEST = '🧪';
+
+const TIPS = {
+  'draftly/': 'Monorepo root — all three services + shared config live here',
+  'docker-compose.yml': 'Orchestrates frontend + node-service + ai-service + postgres + redis together',
+  '.env.example': 'Template for all env vars — API keys, DB URL, Redis URL, encryption key',
+  'apps/frontend/': 'Next.js 15 app with Tailwind CSS + shadcn/ui. Talks only to node-service.',
+  'apps/frontend/app/': 'Next.js App Router — each folder is a route segment',
+  'apps/frontend/app/(auth)/': 'Route group for login page — no shared layout with dashboard',
+  'apps/frontend/app/(dashboard)/': 'Protected route group — wraps inbox, draft, history, settings',
+  'apps/frontend/app/(dashboard)/inbox/': 'Inbox page — fetches actionable emails via node-service',
+  'apps/frontend/app/(dashboard)/draft/[id]/': 'Dynamic route — review a specific draft by ID',
+  'apps/frontend/app/(dashboard)/history/': 'All past drafts with status badges',
+  'apps/frontend/app/(dashboard)/settings/': 'Tone preferences, signature, profile update',
+  'apps/frontend/components/': 'Shared React components across all pages',
+  'apps/frontend/components/ui/': 'shadcn/ui primitives — Button, Card, Badge, Dialog, etc.',
+  'apps/frontend/components/email/': 'Email-specific components: EmailCard, DraftPanel, TonePicker',
+  'apps/frontend/lib/': 'Client-side utilities — API wrappers, auth helpers',
+  'apps/frontend/lib/api.ts': 'Typed fetch wrapper for all node-service endpoints',
+  'apps/frontend/lib/auth.ts': 'NextAuth config — Google provider, session callbacks',
+  'apps/frontend/hooks/': 'Custom React hooks — useDrafts, useInbox, useProfile',
+  'apps/node-service/': 'Express + TypeScript — handles all I/O: Gmail API, DB, auth, queue',
+  'apps/node-service/src/routes/': 'Express route handlers — auth, emails, drafts, users',
+  'apps/node-service/src/routes/auth.ts': 'GET /auth/google, /auth/callback, /auth/logout — OAuth2 flow',
+  'apps/node-service/src/routes/emails.ts': 'GET /emails — fetch + triage incoming Gmail messages',
+  'apps/node-service/src/routes/drafts.ts': 'GET/POST/PATCH /drafts — generate, review, approve, send',
+  'apps/node-service/src/routes/users.ts': 'GET/PATCH /users/me — profile, preferences, onboarding status',
+  'apps/node-service/src/services/': 'Business logic separated from route handlers',
+  'apps/node-service/src/services/gmail.service.ts': 'All Gmail API calls — fetch, send, thread, sent-mail analysis',
+  'apps/node-service/src/services/draft.service.ts': 'Draft lifecycle — create, update status, idempotency key',
+  'apps/node-service/src/services/triage.service.ts': 'Hard filter + calls AI service for triage. In-memory only.',
+  'apps/node-service/src/services/queue.service.ts': 'BullMQ producer — enqueues failed sends for retry',
+  'apps/node-service/src/workers/': 'BullMQ workers running separately from the HTTP server',
+  'apps/node-service/src/workers/send.worker.ts': 'Retries failed Gmail sends with exponential backoff',
+  'apps/node-service/src/workers/profile.worker.ts': 'Cron: runs 30-day style profile re-evaluation per user',
+  'apps/node-service/src/middleware/': 'Express middleware — auth guard, ownership check, rate limiter',
+  'apps/node-service/src/middleware/auth.ts': 'Validates session cookie — blocks unauthenticated requests',
+  'apps/node-service/src/middleware/ownership.ts': 'verifyDraftOwner — checks draft.userId === req.user.id',
+  'apps/node-service/src/middleware/rateLimit.ts': 'Per-user sliding window limiter via Redis',
+  'apps/node-service/src/lib/': 'Shared utilities for the node service',
+  'apps/node-service/src/lib/crypto.ts': 'AES-256-GCM encrypt/decrypt for Gmail tokens',
+  'apps/node-service/src/lib/prisma.ts': 'Prisma client singleton',
+  'apps/node-service/src/lib/redis.ts': 'Redis client singleton — used by BullMQ + rate limiter',
+  'apps/node-service/src/lib/ai-client.ts': 'HTTP client for calling Python AI service internally',
+  'apps/node-service/prisma/schema.prisma': 'DB schema — users, email_drafts, audit_logs with all updated fields',
+  'apps/ai-service/': 'FastAPI + Python — all AI logic: style analysis, triage, draft generation',
+  'apps/ai-service/app/': 'FastAPI application package',
+  'apps/ai-service/app/main.py': 'FastAPI app entrypoint — mounts all routers',
+  'apps/ai-service/app/routers/': 'API route handlers for each AI capability',
+  'apps/ai-service/app/routers/onboarding.py': 'POST /onboarding/analyse — builds style profile from sent emails',
+  'apps/ai-service/app/routers/triage.py': 'POST /triage — classifies email: actionable/skip + priority',
+  'apps/ai-service/app/routers/draft.py': 'POST /draft/generate — generates reply using style profile + thread',
+  'apps/ai-service/app/routers/profile.py': 'POST /profile/evolve — 30-day style drift detection + delta',
+  'apps/ai-service/app/services/': 'AI business logic — prompt building, Claude calls',
+  'apps/ai-service/app/services/claude.py': 'Anthropic SDK wrapper — single place for all Claude API calls',
+  'apps/ai-service/app/services/style_analyser.py': 'Extracts formalityScore, avgWords, openers from sent emails',
+  'apps/ai-service/app/services/draft_builder.py': 'Builds prompt from style profile + thread context + tone',
+  'apps/ai-service/app/services/triage_engine.py': 'Claude triage prompt + response parser — returns category + priority',
+  'apps/ai-service/app/services/profile_evolver.py': 'Computes delta between old + new style profiles, nudge threshold',
+  'apps/ai-service/app/models/': 'Pydantic schemas for request/response validation',
+  'apps/ai-service/app/models/onboarding.py': 'OnboardingRequest, StyleProfileResponse schemas',
+  'apps/ai-service/app/models/triage.py': 'TriageRequest, TriageResult schemas',
+  'apps/ai-service/app/models/draft.py': 'DraftRequest, DraftResponse schemas',
+  'apps/ai-service/app/core/': 'Config, logging, shared settings',
+  'apps/ai-service/app/core/config.py': 'Settings from env — ANTHROPIC_API_KEY, model name, prompt versions',
+  'apps/ai-service/app/core/prompts.py': 'All Claude prompt templates versioned as constants',
+  'apps/ai-service/requirements.txt': 'fastapi, uvicorn, anthropic, pydantic — pinned versions',
+  'packages/shared/': 'TypeScript types shared between frontend and node-service',
+  'packages/shared/types/': 'Draft, User, StyleProfile, TriageResult interfaces',
+  'infra/': 'Deployment config — Docker, nginx, Railway settings',
+};
+
+const FULL = [
+  {n:'draftly/', t:'dir', b:'b-gray', tip:'root'},
+  {n:'docker-compose.yml', t:'file', i:DOCK, b:'b-amber', d:'all services + postgres + redis'},
+  {n:'.env.example', t:'file', i:ENV, b:'b-amber', d:'all env vars template'},
+  {n:'package.json', t:'file', i:FI, b:'b-gray', d:'monorepo workspaces config'},
+  {n:'turbo.json', t:'file', i:FI, b:'b-gray', d:'Turborepo build pipeline'},
+  {n:'README.md', t:'file', i:DOC, b:'b-gray'},
+  {n:'apps/', t:'dir', b:'b-gray'},
+  {n:'apps/frontend/', t:'dir', b:'b-blue', d:'Next.js 15 + Tailwind + shadcn'},
+  {n:'apps/frontend/app/', t:'dir', b:'b-blue', d:'App Router'},
+  {n:'apps/frontend/app/(auth)/', t:'dir', b:'b-blue', d:'login page route group'},
+  {n:'apps/frontend/app/(auth)/login/page.tsx', t:'file', i:TS, b:'b-blue', d:'"Connect Gmail" landing'},
+  {n:'apps/frontend/app/(dashboard)/', t:'dir', b:'b-blue', d:'protected pages'},
+  {n:'apps/frontend/app/(dashboard)/inbox/page.tsx', t:'file', i:TS, b:'b-blue', d:'actionable emails list'},
+  {n:'apps/frontend/app/(dashboard)/draft/[id]/page.tsx', t:'file', i:TS, b:'b-blue', d:'draft review panel'},
+  {n:'apps/frontend/app/(dashboard)/history/page.tsx', t:'file', i:TS, b:'b-blue', d:'all drafts + statuses'},
+  {n:'apps/frontend/app/(dashboard)/settings/page.tsx', t:'file', i:TS, b:'b-blue', d:'tone, signature, profile'},
+  {n:'apps/frontend/app/layout.tsx', t:'file', i:TS, b:'b-blue', d:'root layout + providers'},
+  {n:'apps/frontend/app/api/auth/[...nextauth]/route.ts', t:'file', i:TS, b:'b-blue', d:'NextAuth Google handler'},
+  {n:'apps/frontend/components/', t:'dir', b:'b-blue'},
+  {n:'apps/frontend/components/ui/', t:'dir', b:'b-blue', d:'shadcn primitives'},
+  {n:'apps/frontend/components/email/', t:'dir', b:'b-blue', d:'EmailCard, DraftPanel, TonePicker'},
+  {n:'apps/frontend/components/email/EmailCard.tsx', t:'file', i:TS, b:'b-blue'},
+  {n:'apps/frontend/components/email/DraftPanel.tsx', t:'file', i:TS, b:'b-blue', d:'review + edit + approve'},
+  {n:'apps/frontend/components/email/TonePicker.tsx', t:'file', i:TS, b:'b-blue', d:'Friendly/Formal/Concise'},
+  {n:'apps/frontend/hooks/', t:'dir', b:'b-blue'},
+  {n:'apps/frontend/hooks/useDrafts.ts', t:'file', i:TS, b:'b-blue'},
+  {n:'apps/frontend/hooks/useInbox.ts', t:'file', i:TS, b:'b-blue'},
+  {n:'apps/frontend/lib/api.ts', t:'file', i:TS, b:'b-blue', d:'typed fetch wrapper'},
+  {n:'apps/frontend/lib/auth.ts', t:'file', i:TS, b:'b-blue', d:'NextAuth config'},
+  {n:'apps/frontend/tailwind.config.ts', t:'file', i:FI, b:'b-blue'},
+  {n:'apps/frontend/next.config.ts', t:'file', i:FI, b:'b-blue'},
+  {n:'apps/node-service/', t:'dir', b:'b-purple', d:'Express + TypeScript I/O service'},
+  {n:'apps/node-service/src/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/routes/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/routes/auth.ts', t:'file', i:TS, b:'b-purple', d:'OAuth2 flow'},
+  {n:'apps/node-service/src/routes/emails.ts', t:'file', i:TS, b:'b-purple', d:'fetch + triage'},
+  {n:'apps/node-service/src/routes/drafts.ts', t:'file', i:TS, b:'b-purple', d:'CRUD + send'},
+  {n:'apps/node-service/src/routes/users.ts', t:'file', i:TS, b:'b-purple', d:'profile + prefs'},
+  {n:'apps/node-service/src/services/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/services/gmail.service.ts', t:'file', i:TS, b:'b-purple', d:'all Gmail API calls'},
+  {n:'apps/node-service/src/services/draft.service.ts', t:'file', i:TS, b:'b-purple', d:'lifecycle + idempotency'},
+  {n:'apps/node-service/src/services/triage.service.ts', t:'file', i:TS, b:'b-purple', d:'hard filter + AI call'},
+  {n:'apps/node-service/src/services/queue.service.ts', t:'file', i:TS, b:'b-purple', d:'BullMQ producer'},
+  {n:'apps/node-service/src/workers/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/workers/send.worker.ts', t:'file', i:TS, b:'b-purple', d:'retry failed sends'},
+  {n:'apps/node-service/src/workers/profile.worker.ts', t:'file', i:TS, b:'b-purple', d:'30-day profile cron'},
+  {n:'apps/node-service/src/middleware/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/middleware/auth.ts', t:'file', i:TS, b:'b-purple', d:'session guard'},
+  {n:'apps/node-service/src/middleware/ownership.ts', t:'file', i:TS, b:'b-purple', d:'verifyDraftOwner'},
+  {n:'apps/node-service/src/middleware/rateLimit.ts', t:'file', i:TS, b:'b-purple', d:'Redis sliding window'},
+  {n:'apps/node-service/src/lib/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/src/lib/crypto.ts', t:'file', i:TS, b:'b-purple', d:'AES-256-GCM token encrypt'},
+  {n:'apps/node-service/src/lib/prisma.ts', t:'file', i:TS, b:'b-purple', d:'Prisma singleton'},
+  {n:'apps/node-service/src/lib/redis.ts', t:'file', i:TS, b:'b-purple', d:'Redis singleton'},
+  {n:'apps/node-service/src/lib/ai-client.ts', t:'file', i:TS, b:'b-purple', d:'calls Python AI service'},
+  {n:'apps/node-service/src/app.ts', t:'file', i:TS, b:'b-purple', d:'Express app setup'},
+  {n:'apps/node-service/src/server.ts', t:'file', i:TS, b:'b-purple', d:'HTTP server entrypoint'},
+  {n:'apps/node-service/prisma/', t:'dir', b:'b-purple'},
+  {n:'apps/node-service/prisma/schema.prisma', t:'file', i:FI, b:'b-purple', d:'users, email_drafts, audit_logs'},
+  {n:'apps/node-service/prisma/migrations/', t:'dir', b:'b-purple', d:'Prisma migration history'},
+  {n:'apps/node-service/tsconfig.json', t:'file', i:FI, b:'b-purple'},
+  {n:'apps/ai-service/', t:'dir', b:'b-teal', d:'FastAPI + Python AI service'},
+  {n:'apps/ai-service/app/', t:'dir', b:'b-teal'},
+  {n:'apps/ai-service/app/main.py', t:'file', i:PY, b:'b-teal', d:'FastAPI entrypoint'},
+  {n:'apps/ai-service/app/routers/', t:'dir', b:'b-teal'},
+  {n:'apps/ai-service/app/routers/onboarding.py', t:'file', i:PY, b:'b-teal', d:'analyse style from sent mail'},
+  {n:'apps/ai-service/app/routers/triage.py', t:'file', i:PY, b:'b-teal', d:'classify email + priority'},
+  {n:'apps/ai-service/app/routers/draft.py', t:'file', i:PY, b:'b-teal', d:'generate reply draft'},
+  {n:'apps/ai-service/app/routers/profile.py', t:'file', i:PY, b:'b-teal', d:'30-day drift detection'},
+  {n:'apps/ai-service/app/services/', t:'dir', b:'b-teal'},
+  {n:'apps/ai-service/app/services/claude.py', t:'file', i:PY, b:'b-teal', d:'Anthropic SDK wrapper'},
+  {n:'apps/ai-service/app/services/style_analyser.py', t:'file', i:PY, b:'b-teal', d:'formalityScore, avgWords'},
+  {n:'apps/ai-service/app/services/draft_builder.py', t:'file', i:PY, b:'b-teal', d:'prompt builder'},
+  {n:'apps/ai-service/app/services/triage_engine.py', t:'file', i:PY, b:'b-teal', d:'triage prompt + parser'},
+  {n:'apps/ai-service/app/services/profile_evolver.py', t:'file', i:PY, b:'b-teal', d:'delta + nudge threshold'},
+  {n:'apps/ai-service/app/models/', t:'dir', b:'b-teal'},
+  {n:'apps/ai-service/app/models/onboarding.py', t:'file', i:PY, b:'b-teal', d:'Pydantic schemas'},
+  {n:'apps/ai-service/app/models/triage.py', t:'file', i:PY, b:'b-teal', d:'TriageRequest/Result'},
+  {n:'apps/ai-service/app/models/draft.py', t:'file', i:PY, b:'b-teal', d:'DraftRequest/Response'},
+  {n:'apps/ai-service/app/core/', t:'dir', b:'b-teal'},
+  {n:'apps/ai-service/app/core/config.py', t:'file', i:PY, b:'b-teal', d:'env settings, model name'},
+  {n:'apps/ai-service/app/core/prompts.py', t:'file', i:PY, b:'b-teal', d:'versioned Claude prompts'},
+  {n:'apps/ai-service/requirements.txt', t:'file', i:FI, b:'b-teal', d:'fastapi, anthropic, pydantic'},
+  {n:'apps/ai-service/Dockerfile', t:'file', i:DOCK, b:'b-teal'},
+  {n:'packages/', t:'dir', b:'b-amber'},
+  {n:'packages/shared/', t:'dir', b:'b-amber', d:'TS types shared across services'},
+  {n:'packages/shared/types/draft.ts', t:'file', i:TS, b:'b-amber'},
+  {n:'packages/shared/types/user.ts', t:'file', i:TS, b:'b-amber'},
+  {n:'packages/shared/types/styleProfile.ts', t:'file', i:TS, b:'b-amber'},
+  {n:'infra/', t:'dir', b:'b-amber'},
+  {n:'infra/nginx.conf', t:'file', i:FI, b:'b-amber', d:'reverse proxy config'},
+  {n:'infra/railway.toml', t:'file', i:FI, b:'b-amber', d:'Railway deployment config'},
+];
+
+const FE_ONLY = FULL.filter(f => f.n.startsWith('apps/frontend/') || f.n === 'draftly/');
+const NODE_ONLY = FULL.filter(f => f.n.startsWith('apps/node-service/') || f.n === 'draftly/');
+const PY_ONLY = FULL.filter(f => f.n.startsWith('apps/ai-service/') || f.n === 'draftly/');
+
+function getDepth(name) {
+  const parts = name.split('/').filter(Boolean);
+  return Math.max(0, parts.length - 1);
+}
+
+function getShortName(name) {
+  const parts = name.split('/').filter(Boolean);
+  return (name.endsWith('/') ? parts[parts.length-1]+'/' : parts[parts.length-1]);
+}
+
+function isLast(items, idx) {
+  for (let i = idx+1; i < items.length; i++) {
+    if (getDepth(items[i].n) <= getDepth(items[idx].n)) return true;
+  }
+  return true;
+}
+
+function buildTree(items, containerId) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+
+  const openState = {};
+  let idCounter = 0;
+
+  function render() {
+    container.innerHTML = '';
+    let skipDepth = -1;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const depth = getDepth(item.n);
+      const shortName = getShortName(item.n);
+      const isDir = item.t === 'dir';
+      const id = 'node-'+containerId+i;
+
+      if (skipDepth >= 0 && depth > skipDepth) continue;
+      if (skipDepth >= 0 && depth <= skipDepth) skipDepth = -1;
+
+      if (isDir && openState[item.n] === false) {
+        skipDepth = depth;
+      }
+
+      const row = document.createElement('div');
+      row.className = 'row' + (isDir ? ' clickable' : '');
+      row.id = id;
+
+      let html = '';
+      for (let d = 0; d < depth; d++) {
+        html += `<span class="indent">│</span>`;
+      }
+      html += `<span class="branch">${depth > 0 ? '├ ' : ''}</span>`;
+
+      if (isDir) {
+        const isOpen = openState[item.n] !== false;
+        html += `<span class="toggle ${isOpen ? 'open' : ''}" id="tgl-${id}">›</span>`;
+        html += `<span class="icon">📁</span>`;
+        html += `<span class="name dir">${shortName}</span>`;
+      } else {
+        html += `<span class="toggle" style="visibility:hidden">›</span>`;
+        html += `<span class="icon">${item.i || '📄'}</span>`;
+        html += `<span class="name ${depth===0?'entry':'file'}">${shortName}</span>`;
+      }
+
+      if (item.b) html += `<span class="badge ${item.b}">${item.b==='b-blue'?'Next.js':item.b==='b-purple'?'Node':item.b==='b-teal'?'Python':item.b==='b-amber'?'Shared':'Root'}</span>`;
+      if (item.d) html += `<span class="detail">— ${item.d}</span>`;
+
+      row.innerHTML = html;
+
+      const tipText = TIPS[item.n];
+      if (tipText) {
+        row.addEventListener('mouseenter', (e) => showTip(e, tipText));
+        row.addEventListener('mousemove', moveTip);
+        row.addEventListener('mouseleave', hideTip);
+      }
+
+      if (isDir) {
+        row.addEventListener('click', () => {
+          openState[item.n] = openState[item.n] === false ? true : false;
+          render();
+        });
+      }
+
+      container.appendChild(row);
+    }
+  }
+
+  render();
+}
+
+const tip = document.getElementById('tip');
+function showTip(e, text) {
+  tip.textContent = text;
+  tip.style.display = 'block';
+  moveTip(e);
+}
+function moveTip(e) {
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top = (e.clientY - 10) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab[onclick="switchTab('${name}')"]`).classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+}
+
+buildTree(FULL, 'tree-all');
+buildTree(FE_ONLY, 'tree-fe');
+buildTree(NODE_ONLY, 'tree-node');
+buildTree(PY_ONLY, 'tree-py');
+</script>
