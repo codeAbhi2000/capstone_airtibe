@@ -1,0 +1,42 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── Environment files ────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Build outputs ────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+
+# ── Next.js ──────────────────────────────────────────────────────────────────
+.next/
+apps/frontend/.next/
+
+# ── Prisma generated client ──────────────────────────────────────────────────
+apps/node-service/src/generated/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+venv/
+apps/ai-service/venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+
+# ── Misc / Editor ────────────────────────────────────────────────────────────
+temp/
+.cursor/
+.DS_Store
+Thumbs.db
+*.log
+
+# ── SQLite / Prisma dev db ───────────────────────────────────────────────────
+prisma/dev.db
+*.db

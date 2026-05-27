@@ -1,36 +1,96 @@
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma" 
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "mysql"
+  url = env("DATABASE_URL")
 }
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
 enum Plan {
   free
   paid
 }
 
+enum DraftStatus {
+  pending
+  approved
+  edited
+  rejected
+  sent
+}
+
+enum Priority {
+  high
+  medium
+  low
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
 model User {
-  id                 String   @id @default(uuid())
-  plan               Plan     @default(free)
-  stripeCustomerId   String?  @unique
-  stripeSubId        String?
-  draftsUsedMonth    Int      @default(0)
-  billingPeriodStart DateTime @default(now())
+  id                  String    @id @default(uuid())
+  googleId            String    @unique @map("google_id")
+  email               String    @unique
+  name                String?
+  image               String?
+  encryptedTokens     String?   @db.Text @map("encrypted_tokens")
+  plan                Plan      @default(free)
+  stripeCustomerId    String?   @unique @map("stripe_customer_id")
+  stripeSubId         String?   @map("stripe_sub_id")
+  draftsUsedMonth     Int       @default(0) @map("drafts_used_month")
+  billingPeriodStart  DateTime  @default(now()) @map("billing_period_start")
+  onboardingComplete  Boolean   @default(false) @map("onboarding_complete")
+  onboardingAt        DateTime? @map("onboarding_at")
+  profileReviewedAt   DateTime? @map("profile_reviewed_at")
+  preferences         Json?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  drafts    EmailDraft[]
+  auditLogs AuditLog[]
 
   @@map("users")
 }
 
 model EmailDraft {
-  id String @id @default(uuid())
+  id            String      @id @default(uuid())
+  userId        String      @map("user_id")
+  messageId     String      @map("message_id")
+  threadId      String      @map("thread_id")
+  subject       String?
+  fromEmail     String?     @map("from_email")
+  status        DraftStatus @default(pending)
+  priority      Priority    @default(medium)
+  aiDraft       String?     @db.Text @map("ai_draft")
+  finalDraft    String?     @db.Text @map("final_draft")
+  promptVersion String?     @map("prompt_version")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
 
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auditLogs AuditLog[]
+
+  @@index([userId])
+  @@index([status])
   @@map("email_drafts")
 }
 
 model AuditLog {
-  id String @id @default(uuid())
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  draftId       String?  @map("draft_id")
+  action        String
+  gmailMessageId String? @map("gmail_message_id")
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
 
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  draft EmailDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
   @@map("audit_logs")
 }
