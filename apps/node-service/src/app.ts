@@ -4,12 +4,14 @@ import cookieParser from "cookie-parser";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { prisma } from "./lib/prisma";
-import { encrypt } from "./lib/crypto";
+import { encrypt, decrypt } from "./lib/crypto";
 import { authRouter } from "./routes/auth";
 import { usersRouter } from "./routes/users";
 import { emailsRouter } from "./routes/emails";
 import { draftsRouter } from "./routes/drafts";
 import { webhooksRouter } from "./routes/webhooks";
+import pinoHttp from "pino-http";
+import logger from "./lib/logger";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -99,6 +101,7 @@ app.use(
 );
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => (req as any).url === "/health" } }));
 app.use(passport.initialize());
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

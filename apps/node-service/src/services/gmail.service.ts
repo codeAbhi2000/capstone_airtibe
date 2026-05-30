@@ -1,6 +1,9 @@
 // gmail service all gmail related logic goes here, like fetching emails, sending emails, etc. This is where the Gmail API client will be used.
 
 import { getGmailClient } from "../lib/gmail-client";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("gmail.service");
 
 export function decodeBody(payload: any): string {
   if (!payload) return '';
@@ -57,13 +60,39 @@ export async function fetchSentEmails(userId: string, count = 30) {
   }));
 }
 
-export async function fetchIncomingEmail(userId: string, messageId: string) {
-  const gmail = await getGmailClient(userId);
-  const msg = await gmail.users.messages.get({
-    userId: 'me',
-    id: messageId,
-    format: 'full'
-  });
+export async function fetchIncomingEmail(gmailClient : any, messageId: string) {
+
+  const meta = await gmailClient.users.messages.get({
+  userId: 'me',
+  id: messageId,
+  format: 'metadata',       // cheap — no body fetched
+  metadataHeaders: ['From', 'Subject'],
+});
+
+const labels = meta.data.labelIds || [];
+
+const SKIP_LABELS = [
+  'CATEGORY_PROMOTIONS',
+  'CATEGORY_UPDATES',
+  'CATEGORY_SOCIAL',
+  'CATEGORY_FORUMS',
+  'SPAM',
+];
+
+if (SKIP_LABELS.some(l => labels.includes(l))) {
+  log.info(
+    { messageId, labels },
+    "Email has labels indicating it's not a primary email, skipping",
+  );
+  return; // skip, don't fetch full message
+}
+
+// Only now fetch full message — confirmed Primary inbox
+const msg = await gmailClient.users.messages.get({
+  userId: 'me',
+  id: messageId,
+  format: 'full',
+});
 
   const headers = msg.data.payload?.headers || [];
   const getHeader = (name: string) => headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
@@ -130,4 +159,37 @@ export async function sendReplyEmail(
   });
 
   return response.data;
-}
+}
+
+
+export async function setupGmailWatch(userId: string) {
+  try {
+    const gmail = await getGmailClient(userId);
+    const projectId = (process.env.GCP_PROJECT_ID || '').trim();
+    const watchTopic = (process.env.GMAIL_WATCH_TOPIC || '').trim();
+    const topicName = `projects/${projectId}/topics/${watchTopic}`;
+
+    const response = await gmail.users.watch({
+      userId: 'me',
+      requestBody: {
+        labelIds: ['UNREAD', "INBOX"],
+        topicName,
+        labelFilterBehavior: 'INCLUDE'
+      }
+    });
+    log.info({ topicName }, "Sending watch request");
+
+    const { historyId, expiration } = response.data;
+        
+    log.info(
+      { historyId, expiresAt: new Date(Number(expiration)).toISOString() },
+      "✅ Gmail watch successfully configured"
+    );
+
+    return response.data;
+
+  } catch (error: any) {
+    log.error({ err: error?.message || error }, "❌ Failed to establish Gmail watch connection");
+    throw error;
+  }
+}

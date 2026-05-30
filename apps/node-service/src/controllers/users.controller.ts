@@ -3,6 +3,9 @@ import { AuthRequest } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { fetchSentEmails } from "../services/gmail.service";
 import { PLAN_LIMITS } from "@draftly/shared";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("users.controller");
 
 const DEFAULT_STYLE_PROFILE = {
   formalityScore: 68,
@@ -27,6 +30,7 @@ export const getUserProfile: RequestHandler = async (req, res) => {
         onboardingAt: true,
         preferences: true,
         createdAt: true,
+        limi
       },
     });
 
@@ -129,7 +133,8 @@ export const updateUserPreferences: RequestHandler = async (req, res) => {
       select: { preferences: true },
     });
 
-    const currentPreferences = (currentUser?.preferences as Record<string, unknown>) || {};
+    const currentPreferences =
+      (currentUser?.preferences as Record<string, unknown>) || {};
     const updatedPreferences = {
       ...currentPreferences,
       ...preferences,
@@ -169,7 +174,8 @@ export const completeOnboarding: RequestHandler = async (req, res) => {
       select: { preferences: true },
     });
 
-    const currentPreferences = (currentUser?.preferences as Record<string, unknown>) || {};
+    const currentPreferences =
+      (currentUser?.preferences as Record<string, unknown>) || {};
     const updatedPreferences = {
       ...currentPreferences,
       ...(preferences && preferences),
@@ -203,40 +209,67 @@ export const analyseSentEmails: RequestHandler = async (req, res) => {
   const authReq = req as AuthRequest;
   try {
     const userId = authReq.user!.id;
-    console.log(`Starting analysis of sent emails for user: ${userId}`);
+    log.info({ userId }, "Starting analysis of sent emails");
 
     let sentEmails: Array<{ body: string }> = [];
     try {
-      sentEmails = await fetchSentEmails(userId, 30);
+      sentEmails = await fetchSentEmails(userId, 4);
     } catch (err) {
-      console.log("Could not fetch sent emails from GMail, proceeding with local fallback data structure:", err);
+      log.warn(
+        { err },
+        "Could not fetch sent emails from Gmail, using fallback",
+      );
     }
 
-    console.log("Fetched sent emails count:", sentEmails.length);
+    log.info({ count: sentEmails.length }, "Fetched sent emails");
 
     let styleProfile = null;
 
     // Call Python AI Service for analysis if available
     if (process.env.AI_SERVICE_URL && sentEmails.length > 0) {
       try {
-        console.log(`Delegating to AI-Service at ${process.env.AI_SERVICE_URL}/onboarding/analyse`);
-        const aiRes = await fetch(`${process.env.AI_SERVICE_URL}/onboarding/analyse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ emails: sentEmails }),
-        });
+        log.info(
+          { url: `${process.env.AI_SERVICE_URL}/analyse-style`, userId },
+          "Delegating to AI-Service for style analysis",
+        );
+        // Map sentEmails to required format: { subject, toEmail, body }
+        const formattedEmails = sentEmails.filter((email: any) => email.body?.trim()).map((email: any) => ({
+          subject: email.subject || "(No subject)",
+          toEmail: email.toEmail || "recipient@example.com",
+          body: email.body || "",
+        }));
+
+        const aiRes = await fetch(
+          `${process.env.AI_SERVICE_URL}/analyse-style`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              emails: formattedEmails,
+            }),
+          },
+        );
         if (aiRes.ok) {
           const data = await aiRes.json();
           styleProfile = data.styleProfile || data;
+        } else {
+          log.warn(
+            { status: aiRes.status },
+            "AI service returned non-OK status",
+          );
         }
       } catch (err) {
-        console.log("Error calling AI service for style analysis, falling back to heuristics:", err);
+        log.warn(
+          { err },
+          "Error calling AI service for style analysis, falling back to heuristics",
+        );
       }
     }
 
     // Heuristics local fallback
     if (!styleProfile) {
-      console.log("Using node-service local heuristic analysis fallback");
+      log.info("Using node-service local heuristic analysis fallback");
       if (sentEmails.length === 0) {
         styleProfile = DEFAULT_STYLE_PROFILE;
       } else {
@@ -247,36 +280,63 @@ export const analyseSentEmails: RequestHandler = async (req, res) => {
 
         sentEmails.forEach((email) => {
           const body = email.body || "";
-          const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
+          const lines = body
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean);
           const words = body.split(/\s+/).filter(Boolean);
           totalWords += words.length;
 
           if (lines.length > 0) {
             const firstLine = lines[0].toLowerCase();
-            if (firstLine.includes("dear") || firstLine.includes("hello sir") || firstLine.includes("hello madam")) {
+            if (
+              firstLine.includes("dear") ||
+              firstLine.includes("hello sir") ||
+              firstLine.includes("hello madam")
+            ) {
               formalHits++;
               openers.add(lines[0]);
-            } else if (firstLine.startsWith("hi") || firstLine.startsWith("hey") || firstLine.startsWith("hello")) {
+            } else if (
+              firstLine.startsWith("hi") ||
+              firstLine.startsWith("hey") ||
+              firstLine.startsWith("hello")
+            ) {
               openers.add(lines[0]);
             }
           }
 
           if (lines.length > 1) {
             const lastLine = lines[lines.length - 1].toLowerCase();
-            if (lastLine.includes("sincerely") || lastLine.includes("respectfully") || lastLine.includes("best regards")) {
+            if (
+              lastLine.includes("sincerely") ||
+              lastLine.includes("respectfully") ||
+              lastLine.includes("best regards")
+            ) {
               formalHits++;
               closers.add(lines[lines.length - 1]);
-            } else if (lastLine.includes("best") || lastLine.includes("thanks") || lastLine.includes("regards") || lastLine.includes("cheers")) {
+            } else if (
+              lastLine.includes("best") ||
+              lastLine.includes("thanks") ||
+              lastLine.includes("regards") ||
+              lastLine.includes("cheers")
+            ) {
               closers.add(lines[lines.length - 1]);
             }
           }
         });
 
         const avgWords = Math.round(totalWords / sentEmails.length) || 50;
-        const formalityScore = Math.round((formalHits / sentEmails.length) * 100) || 50;
+        const formalityScore =
+          Math.round((formalHits / sentEmails.length) * 100) || 50;
 
-        const commonOpeners = openers.size > 0 ? Array.from(openers).slice(0, 3) : DEFAULT_STYLE_PROFILE.commonOpeners;
-        const commonClosers = closers.size > 0 ? Array.from(closers).slice(0, 3) : DEFAULT_STYLE_PROFILE.commonClosers;
+        const commonOpeners =
+          openers.size > 0
+            ? Array.from(openers).slice(0, 3)
+            : DEFAULT_STYLE_PROFILE.commonOpeners;
+        const commonClosers =
+          closers.size > 0
+            ? Array.from(closers).slice(0, 3)
+            : DEFAULT_STYLE_PROFILE.commonClosers;
 
         const traits = [];
         if (avgWords < 50) traits.push("Highly concise");
@@ -303,7 +363,8 @@ export const analyseSentEmails: RequestHandler = async (req, res) => {
       where: { id: userId },
       select: { preferences: true },
     });
-    const currentPrefs = (currentUser?.preferences as Record<string, any>) || {};
+    const currentPrefs =
+      (currentUser?.preferences as Record<string, any>) || {};
     await prisma.user.update({
       where: { id: userId },
       data: {
@@ -316,7 +377,7 @@ export const analyseSentEmails: RequestHandler = async (req, res) => {
 
     res.status(200).json(styleProfile);
   } catch (err) {
-    console.log("Error during style analysis:", err);
+    log.error({ err }, "Error during style analysis");
     res.status(500).json({ error: "Internal server error" });
   }
 };

@@ -50,7 +50,7 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
 export async function analyzeWritingStyle(): Promise<StyleProfile> {
   try {
     alert("Starting style analysis. This may take a moment...");
-    return await request<StyleProfile>("/users/me/onboarding/analyse", { method: "GET" });
+    return await request<StyleProfile>("/users/me/onboarding/analyse", { method: "POST" });
   } catch {
     await delay(2800);
     return MOCK_STYLE_PROFILE;

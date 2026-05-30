@@ -5,6 +5,10 @@ import { prisma } from "../lib/prisma";
 import { PLAN_LIMITS } from "@draftly/shared";
 import { generateAIDraftCall } from "../services/draft.service";
 import { fetchIncomingEmail, sendReplyEmail } from "../services/gmail.service";
+import { getGmailClient } from "../lib/gmail-client";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("drafts.controller");
 
 export const listDrafts: RequestHandler = async (req, res) => {
   const authReq = req as AuthRequest;
@@ -146,7 +150,13 @@ export const generateDraft: RequestHandler = async (req, res) => {
     }
 
     // 2. Fetch original incoming email details from Gmail
-    const emailDetails = await fetchIncomingEmail(userId, messageId);
+    const gmailClient = await getGmailClient(userId);
+    const emailDetails = await fetchIncomingEmail(gmailClient, messageId);
+
+    if (!emailDetails) {
+      res.status(422).json({ error: "Email is a notification or system message and cannot be drafted" });
+      return;
+    }
 
     // 3. Call AI / OpenRouter Service to generate reply (with fallback)
     const finalTone = tone || "friendly";
@@ -186,7 +196,7 @@ export const generateDraft: RequestHandler = async (req, res) => {
 
     res.status(201).json({ draft });
   } catch (err: any) {
-    console.log("Error generating draft:", err);
+    log.error({ err }, "Error generating draft");
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -352,7 +362,7 @@ export const sendDraft: RequestHandler = async (req, res) => {
 
     res.json({ success: true, draft: updatedDraft });
   } catch (err: any) {
-    console.log("Error sending draft email:", err);
+    log.error({ err }, "Error sending draft email");
     res.status(500).json({ error: "Failed to send email" });
   }
 };

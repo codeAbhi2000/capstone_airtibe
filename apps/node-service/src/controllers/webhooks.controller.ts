@@ -2,6 +2,10 @@ import { Request, RequestHandler, Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import Stripe from "stripe";
+import { draftingHandler } from "../services/draft.service";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("webhooks.controller");
 
 // Initialize Stripe if secret is present
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
@@ -27,7 +31,7 @@ export const createUpgradeSession: RequestHandler = async (req, res) => {
 
     // Dev mode auto-upgrade fallback if Stripe is not configured
     if (!stripe) {
-      console.log("Stripe Secret Key not configured. Dev mode auto-upgrade activated.");
+      log.warn("Stripe Secret Key not configured — dev mode auto-upgrade activated");
       const updatedUser = await prisma.user.update({
         where: { id: userId },
         data: {
@@ -64,7 +68,7 @@ export const createUpgradeSession: RequestHandler = async (req, res) => {
 
     res.json({ checkoutUrl: session.url });
   } catch (err: any) {
-    console.log("Error creating upgrade checkout session:", err);
+    log.error({ err }, "Error creating upgrade checkout session");
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -84,11 +88,11 @@ export const handleStripeWebhook: RequestHandler = async (req, res) => {
       );
     } else {
       // Direct parsing for dev local environment
-      console.log("Skipping Stripe signature verification in development mode.");
+      log.warn("Skipping Stripe signature verification in development mode");
       event = req.body;
     }
   } catch (err: any) {
-    console.log("Webhook signature verification failed:", err.message);
+    log.error({ err }, "Webhook signature verification failed");
     res.status(400).send(`Webhook Error: ${err.message}`);
     return;
   }
@@ -112,7 +116,7 @@ export const handleStripeWebhook: RequestHandler = async (req, res) => {
               billingPeriodStart: new Date(),
             },
           });
-          console.log(`Stripe Webhook: User ${userId} upgraded to Premium.`);
+          log.info({ userId }, "Stripe Webhook: User upgraded to Premium");
         }
         break;
       }
@@ -132,7 +136,7 @@ export const handleStripeWebhook: RequestHandler = async (req, res) => {
                 stripeSubId,
               },
             });
-            console.log(`Stripe Sync: Customer ${stripeCustomerId} updated to Paid plan.`);
+            log.info({ stripeCustomerId }, "Stripe Sync: Customer updated to Paid plan");
           } else {
             await prisma.user.update({
               where: { stripeCustomerId },
@@ -156,7 +160,7 @@ export const handleStripeWebhook: RequestHandler = async (req, res) => {
               stripeSubId: null,
             },
           });
-          console.log(`Stripe Webhook Downgrade: Customer ${stripeCustomerId} reverted to Free plan.`);
+          log.info({ stripeCustomerId }, "Stripe Webhook Downgrade: Customer reverted to Free plan");
         }
         break;
       }
@@ -164,8 +168,41 @@ export const handleStripeWebhook: RequestHandler = async (req, res) => {
 
     res.json({ received: true });
   } catch (err: any) {
-    console.log("Error handling Stripe event:", err);
+    log.error({ err }, "Error handling Stripe event");
     res.status(500).json({ error: "Webhook event handler failed" });
   }
 };
 
+
+export const gmailNotificationHandler: RequestHandler = (req, res) => {
+  const pubSubMessage = req.body.message;
+
+  if (!pubSubMessage || !pubSubMessage.data) {
+    res.status(400).send('Bad Request: Missing Pub/Sub message data.');
+    return;
+  }
+
+  let userEmail: string;
+  let historyId: string;
+
+  try {
+    const decodedString = Buffer.from(pubSubMessage.data, 'base64').toString('utf-8');
+    const emailEvent = JSON.parse(decodedString);
+    userEmail = emailEvent.emailAddress;
+    historyId = emailEvent.historyId.toString();
+  } catch (error) {
+    log.error({ err: error }, "Failed to parse Gmail Pub/Sub message");
+    res.status(400).send('Bad Request: Invalid message data.');
+    return;
+  }
+
+  log.info({ userEmail, historyId }, "📩 New email event received");
+
+  // Acknowledge immediately to prevent Google Pub/Sub retries
+  res.status(200).send('Event received');
+
+  // Process asynchronously — errors are logged but do not affect the 200 already sent
+  draftingHandler(userEmail, historyId).catch((err) => {
+    log.error({ err, userEmail, historyId }, "Error processing Gmail webhook event");
+  });
+}

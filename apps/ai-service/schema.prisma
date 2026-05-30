@@ -1,11 +1,13 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma" 
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+
 }
 
 datasource db {
   provider = "mysql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -32,28 +34,28 @@ enum Priority {
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
-  id                  String    @id @default(uuid())
-  googleId            String    @unique @map("google_id")
-  email               String    @unique
-  name                String?
-  image               String?
-  encryptedTokens     String?   @db.Text @map("encrypted_tokens")
-  plan                Plan      @default(free)
-  stripeCustomerId    String?   @unique @map("stripe_customer_id")
-  stripeSubId         String?   @map("stripe_sub_id")
-  draftsUsedMonth     Int       @default(0) @map("drafts_used_month")
-  billingPeriodStart  DateTime  @default(now()) @map("billing_period_start")
-  onboardingComplete  Boolean   @default(false) @map("onboarding_complete")
-  onboardingAt        DateTime? @map("onboarding_at")
-  profileReviewedAt   DateTime? @map("profile_reviewed_at")
-  preferences         Json?
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid())
+  googleId           String    @unique @map("google_id")
+  email              String    @unique
+  name               String?
+  image              String?
+  encryptedTokens    String?   @db.Text @map("encrypted_tokens")
+  plan               Plan      @default(free)
+  stripeCustomerId   String?   @unique @map("stripe_customer_id")
+  stripeSubId        String?   @map("stripe_sub_id")
+  draftsUsedMonth    Int       @default(0) @map("drafts_used_month")
+  billingPeriodStart DateTime  @default(now()) @map("billing_period_start")
+  onboardingComplete Boolean   @default(false) @map("onboarding_complete")
+  onboardingAt       DateTime? @map("onboarding_at")
+  profileReviewedAt  DateTime? @map("profile_reviewed_at")
+  preferences        Json?
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  drafts             EmailDraft[]
-  auditLogs          AuditLog[]
+  drafts            EmailDraft[]
+  auditLogs         AuditLog[]
   processedHistories ProcessedHistory[]
-  userStyle          UserStyle?
+  userStyle         UserStyle?
 
   @@map("users")
 }
@@ -83,13 +85,13 @@ model EmailDraft {
 }
 
 model AuditLog {
-  id            String   @id @default(uuid())
-  userId        String   @map("user_id")
-  draftId       String?  @map("draft_id")
-  action        String
-  gmailMessageId String? @map("gmail_message_id")
-  metadata      Json?
-  createdAt     DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  draftId        String?  @map("draft_id")
+  action         String
+  gmailMessageId String?  @map("gmail_message_id")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   draft EmailDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
@@ -99,12 +101,12 @@ model AuditLog {
 }
 
 model ProcessedHistory {
-  id            String   @id @default(uuid())
-  userId        String   @map("user_id")
-  historyId     String   @unique @map("history_id")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  historyId String   @unique @map("history_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("processed_history")

@@ -47,7 +47,7 @@ export default function LoginPage() {
           {/* CTA */}
           <a
             id="google-login-btn"
-            href={`${apiUrl}/api/auth/google`}
+            href={`${apiUrl}/auth/google`}
             className="flex w-full items-center justify-center gap-3 rounded-xl bg-white px-6 py-3 text-sm font-medium text-slate-800 shadow-md ring-1 ring-slate-200 transition-all duration-200 hover:shadow-lg hover:ring-slate-300 active:scale-95"
           >
             {/* Google G logo */}

@@ -1,5 +1,16 @@
 // src/services/draft.service.ts
 
+import { shouldSkip } from "../lib/email-filter";
+import { getMessageId } from "../lib/getMessageId";
+import { getGmailClient } from "../lib/gmail-client";
+import { prisma } from "../lib/prisma";
+import { createLogger } from "../lib/logger";
+import { publishDraftMessage } from "../lib/message-queue";
+import { fetchIncomingEmail } from "./gmail.service";
+import { triageEmailForDraftGeneration } from "./triage.service";
+
+const log = createLogger("draft.service");
+
 export interface EmailDetails {
   subject: string;
   body: string;
@@ -15,13 +26,16 @@ export async function generateAIDraftCall(
   userId: string,
   email: EmailDetails,
   tone: string = "friendly",
-  instruction?: string
+  instruction?: string,
 ): Promise<string> {
   const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
 
   if (process.env.AI_SERVICE_URL) {
     try {
-      console.log(`Calling Python AI service at ${aiServiceUrl}/draft/generate for user ${userId}`);
+      log.info(
+        { aiServiceUrl, userId },
+        "Calling Python AI service for draft generation",
+      );
       const response = await fetch(`${aiServiceUrl}/draft/generate`, {
         method: "POST",
         headers: {
@@ -38,22 +52,31 @@ export async function generateAIDraftCall(
       });
 
       if (response.ok) {
-        const data = (await response.json()) as { draftText: string; draft?: string };
+        const data = (await response.json()) as {
+          draftText: string;
+          draft?: string;
+        };
         const draftText = data.draftText || data.draft;
         if (draftText) {
           return draftText.trim();
         }
       }
-      console.log("AI service returned a non-ok response, using fallback draft generator");
+      log.warn(
+        "AI service returned a non-ok response, using fallback draft generator",
+      );
     } catch (err) {
-      console.log("Error contacting Python AI service, using fallback draft generator:", err);
+      log.warn(
+        { err },
+        "Error contacting Python AI service, using fallback draft generator",
+      );
     }
   }
 
   // High-Quality Custom Fallback Draft Generator
-  console.log("Generating fallback draft reply based on tone and instruction...");
-  const cleanSender = email.senderName || email.fromEmail.split("<")[0].trim() || "there";
-  
+  log.info("Generating fallback draft reply based on tone and instruction");
+  const cleanSender =
+    email.senderName || email.fromEmail.split("<")[0].trim() || "there";
+
   let greeting = `Hi ${cleanSender},`;
   if (tone === "formal") {
     greeting = `Dear ${cleanSender},`;
@@ -74,4 +97,105 @@ export async function generateAIDraftCall(
   }
 
   return `${greeting}\n\n${bodyText}${closing}`;
+}
+
+export async function draftingHandler(
+  emailId: string,
+  historyId: string,
+): Promise<void> {
+  // 1. Validate inputs early
+  if (!emailId || !historyId) {
+    throw new Error(
+      `Invalid inputs: emailId=${emailId}, historyId=${historyId}`,
+    );
+  }
+
+  // 2. Idempotency check — skip if already processed
+  const alreadyProcessed = await prisma.processedHistory.findUnique({
+    where: { historyId },
+  });
+  if (alreadyProcessed) {
+    log.info({ historyId }, "Duplicate event, skipping");
+    return;
+  }
+
+  // 3. Graceful user lookup — no non-null assertions
+  const user = await prisma.user.findUnique({
+    where: { email: emailId },
+    select: { id: true },
+  });
+
+  if (!user?.id) {
+    throw new Error(`User not found for email: ${emailId}`);
+  }
+
+  // 4. Reuse cached/pooled Gmail client
+  const gmail = await getGmailClient(user.id); // implement LRU cache inside
+
+  // 5. Parallelize independent lookups
+  const messageId = await getMessageId(emailId, historyId, gmail);
+
+  if (!messageId) {
+    log.warn({ emailId, historyId }, "No messageId found, skipping");
+    return;
+  }
+
+  const message = await fetchIncomingEmail(gmail, messageId);
+
+  if (!message) {
+    log.warn({ messageId }, "Could not fetch email, skipping");
+    console.log(message);
+    return;
+  }
+
+  log.info(
+    { userId: user.id, emailId, messageId },
+    "Fetched email details for draft generation filtering started",
+  );
+  // 6. Filter check
+  const skip = shouldSkip({
+    sender: message.fromEmail,
+    subject: message.subject,
+    body: message.body,
+  });
+  if (skip.skip) {
+    log.info({ reason: skip.reason }, "Skipping draft generation");
+    return;
+  }
+
+  const {needReply , reason} = await triageEmailForDraftGeneration(message.subject, message.body, message.fromEmail);
+
+  if (!needReply) {
+    log.info(
+      { userId: user.id, messageId,reason },
+      "Triage determined no reply needed, skipping draft generation",
+    );
+    return;
+  }
+
+  // 7. Mark history as processed to ensure idempotency
+  await prisma.processedHistory.create({
+    data: { userId: user.id, historyId },
+  });
+
+
+  // 8. Enqueue to message queue for async processing
+  try {
+    await publishDraftMessage({
+      userId: user.id,
+      messageId,
+      threadId: message.threadId,
+      subject: message.subject,
+      fromEmail: message.fromEmail,
+      body: message.body,
+      priority: "medium",
+      sentAt: new Date().toISOString(),
+    });
+    log.info({ userId: user.id, messageId }, "Draft job enqueued to RabbitMQ");
+  } catch (err) {
+    log.warn(
+      { err, userId: user.id, messageId },
+      "Failed to enqueue draft job, will try sync fallback",
+    );
+  }
 }

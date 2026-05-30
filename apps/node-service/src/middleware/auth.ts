@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction, RequestHandler } from "express";
-import jwt from "jsonwebtoken";
+import jwt, { TokenExpiredError } from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 
 export interface AuthRequest extends Request {
@@ -13,6 +13,19 @@ export interface AuthRequest extends Request {
 }
 
 const JWT_SECRET = process.env.SESSION_SECRET ?? "change-me-session-secret";
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Re-issues a fresh JWT and sets it as an HttpOnly cookie on the response. */
+function refreshToken(res: Response, userId: string): void {
+  const fresh = jwt.sign({ sub: userId }, JWT_SECRET, { expiresIn: "7d" });
+  res.cookie("draftly_token", fresh, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: COOKIE_MAX_AGE,
+    path: "/",
+  });
+}
 
 /**
  * Verifies the JWT from the HttpOnly cookie or Authorization Bearer header.
@@ -68,6 +81,46 @@ export const requireAuth: RequestHandler = async (
     authReq.user = user;
     next();
   } catch (err) {
+    // ── Token Expired: attempt silent refresh ─────────────────────────────
+    if (err instanceof TokenExpiredError) {
+      try {
+        // Decode without verification to extract the subject
+        const decoded = jwt.decode(authReq.cookies?.["draftly_token"] ?? "") as {
+          sub?: string;
+        } | null;
+
+        if (!decoded?.sub) {
+          res.status(401).json({ error: "Invalid token" });
+          return;
+        }
+
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.sub },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            image: true,
+            onboardingComplete: true,
+          },
+        });
+
+        if (!user) {
+          res.status(401).json({ error: "User not found" });
+          return;
+        }
+
+        // Reissue a fresh token and continue the request
+        refreshToken(res, user.id);
+        authReq.user = user;
+        next();
+        return;
+      } catch {
+        res.status(401).json({ error: "Token refresh failed" });
+        return;
+      }
+    }
+
     res.status(401).json({ error: "Invalid or expired token" });
   }
 };
