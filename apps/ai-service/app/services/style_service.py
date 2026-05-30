@@ -34,7 +34,7 @@ async def analyse_and_persist_style(
     user_id: str,
     emails: list[dict],
     prompt_version: str | None = None,
-) -> UserStyle:
+) -> dict:
     """
     1. Build versioned prompt from the sent emails
     2. Call Anthropic to extract a style profile (returned as dict)
@@ -77,10 +77,9 @@ async def analyse_and_persist_style(
 
     logger.debug("style_analysis_parsed", style_dict=style_dict, type=type(style_dict).__name__)
 
-
-    return await upsert_user_style(
-        user_id=user_id,
-        style_profile=style_dict,
-        email_count=len(emails),
-        prompt_version=version,
-    )
+    return {
+        "user_id": user_id,        
+        "style_profile": style_dict,
+        "email_count": len(emails),
+        "prompt_version": version,
+    }

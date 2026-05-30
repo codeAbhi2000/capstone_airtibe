@@ -20,6 +20,7 @@ from app.prompts.draft_prompt import get_draft_prompt
 from app.utils.message_envelope import DraftMessageEnvelope
 from app.utils.email_draft_repo import create_draft
 from app.utils.user_style_repo import get_user_style
+from app.lib.parse_json_response import parse_json_response
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -69,12 +70,18 @@ async def generate_and_persist_draft(
     )
 
     ai_draft = response.content[0].text.strip()
+    cleaned_response = parse_json_response(ai_draft)  # reuse ai_draft, not response.content again
+    draft = cleaned_response.get("draft", ai_draft)
+    chips = cleaned_response.get("chips", [])
+
+    print("AI draft generated", { "draft": draft, "chips": chips })
 
     logger.info(
         "draft_generation_complete",
         message_id=envelope.messageId,
-        draft_length=len(ai_draft),
+        draft_length=len(draft),
         user_id=envelope.userId,
+        has_chips=bool(chips),
     )
 
     return await create_draft(
@@ -83,7 +90,8 @@ async def generate_and_persist_draft(
         thread_id=envelope.threadId,
         subject=envelope.subject,
         from_email=envelope.fromEmail,
-        ai_draft=ai_draft,
+        ai_draft=draft,
         prompt_version=version,
         priority=envelope.priority,
+        chips=chips,
     )

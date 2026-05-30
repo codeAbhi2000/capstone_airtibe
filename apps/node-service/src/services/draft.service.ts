@@ -122,12 +122,18 @@ export async function draftingHandler(
   // 3. Graceful user lookup — no non-null assertions
   const user = await prisma.user.findUnique({
     where: { email: emailId },
-    select: { id: true },
+    select: { id: true,draftsUsedMonth: true,plan: true },
   });
 
   if (!user?.id) {
     throw new Error(`User not found for email: ${emailId}`);
   }
+
+  if (user.draftsUsedMonth >= (process.env.MX_DRAFT_PER_MONTH ? parseInt(process.env.MX_DRAFT_PER_MONTH) : 10) && user.plan !== "paid") {
+    log.info({ userId: user.id, draftsUsedMonth: user.draftsUsedMonth }, "User has reached monthly draft limit, skipping draft generation");
+    return;
+  }
+
 
   // 4. Reuse cached/pooled Gmail client
   const gmail = await getGmailClient(user.id); // implement LRU cache inside
@@ -163,11 +169,11 @@ export async function draftingHandler(
     return;
   }
 
-  const {needReply , reason} = await triageEmailForDraftGeneration(message.subject, message.body, message.fromEmail);
+  const {needReply , reason,priority} = await triageEmailForDraftGeneration(message.subject, message.body, message.fromEmail);
 
   if (!needReply) {
     log.info(
-      { userId: user.id, messageId,reason },
+      { userId: user.id, messageId,reason,priority },
       "Triage determined no reply needed, skipping draft generation",
     );
     return;
@@ -188,7 +194,7 @@ export async function draftingHandler(
       subject: message.subject,
       fromEmail: message.fromEmail,
       body: message.body,
-      priority: "medium",
+      priority: priority  || "medium",
       sentAt: new Date().toISOString(),
     });
     log.info({ userId: user.id, messageId }, "Draft job enqueued to RabbitMQ");

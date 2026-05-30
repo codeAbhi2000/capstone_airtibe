@@ -4,6 +4,8 @@ Keeps service layer free of ORM details.
 
 Uses proper DraftStatus / Priority enums from the generated client.
 """
+import json
+
 from prisma.models import EmailDraft
 
 from app.lib.logger import get_logger
@@ -22,6 +24,7 @@ async def create_draft(
     ai_draft: str,
     prompt_version: str,
     priority: str,
+    chips: list[str] | None = None,
 ) -> EmailDraft:
     """
     Insert a new EmailDraft row with status='pending'.
@@ -38,9 +41,14 @@ async def create_draft(
             "promptVersion": prompt_version,
             "priority": priority,
             "status": "pending",
-           
+            "suggestedEdits": json.dumps(chips or []),
         }
     )
+
+    await prisma_client.user.update({
+        "where": {"id": user_id},
+        "data": {"draftsUsedMonth": {"increment": 1}},
+    })
 
     logger.info(
         "draft_persisted",

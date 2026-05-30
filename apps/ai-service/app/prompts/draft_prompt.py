@@ -10,7 +10,6 @@ from typing import Callable
 # ---------------------------------------------------------------------------
 # Version implementations
 # ---------------------------------------------------------------------------
-
 def _v1(
     subject: str,
     from_email: str,
@@ -35,6 +34,13 @@ def _v1(
         "  - Sign off with '[Your name]' as a placeholder\n\n"
         f"This email is marked as {priority.upper()} priority — reflect appropriate urgency in tone."
         + style_section
+        + "\n\n"
+        "Output format — respond ONLY with a valid JSON object, no markdown, no extra text:\n"
+        "{\n"
+        '  "draft": "<the reply body>",\n'
+        '  "chips": ["<chip 1>", "<chip 2>", ...]  '
+        "// 4-6 short imperative tweaks specific to this draft, e.g. 'Make more concise'\n"
+        "}"
     )
     user = (
         f"Original email\n"

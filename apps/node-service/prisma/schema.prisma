@@ -73,6 +73,7 @@ model EmailDraft {
   rewriteCount  Int         @default(0) @map("rewrite_count")
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
+  suggestedEdits Json       @map("chips")
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   auditLogs AuditLog[]

@@ -140,7 +140,10 @@ export const generateDraft: RequestHandler = async (req, res) => {
     }
 
     const limits = PLAN_LIMITS[user.plan as "free" | "paid"];
-    if (limits.draftsPerMonth !== null && user.draftsUsedMonth >= limits.draftsPerMonth) {
+    if (
+      limits.draftsPerMonth !== null &&
+      user.draftsUsedMonth >= limits.draftsPerMonth
+    ) {
       res.status(403).json({
         code: "DRAFT_LIMIT_REACHED",
         message: `You have reached your free plan limit of ${limits.draftsPerMonth} drafts. Please upgrade.`,
@@ -154,13 +157,23 @@ export const generateDraft: RequestHandler = async (req, res) => {
     const emailDetails = await fetchIncomingEmail(gmailClient, messageId);
 
     if (!emailDetails) {
-      res.status(422).json({ error: "Email is a notification or system message and cannot be drafted" });
+      res
+        .status(422)
+        .json({
+          error:
+            "Email is a notification or system message and cannot be drafted",
+        });
       return;
     }
 
     // 3. Call AI / OpenRouter Service to generate reply (with fallback)
     const finalTone = tone || "friendly";
-    const aiDraftText = await generateAIDraftCall(userId, emailDetails, finalTone, additionalInstruction);
+    const aiDraftText = await generateAIDraftCall(
+      userId,
+      emailDetails,
+      finalTone,
+      additionalInstruction,
+    );
 
     // 4. Save to Database
     const draft = await prisma.emailDraft.create({
@@ -174,6 +187,7 @@ export const generateDraft: RequestHandler = async (req, res) => {
         priority: Priority.medium,
         aiDraft: aiDraftText,
         finalDraft: aiDraftText,
+        suggestedEdits: [],
       },
     });
 
@@ -341,7 +355,7 @@ export const sendDraft: RequestHandler = async (req, res) => {
       draft.subject || "Reply",
       emailContent,
       draft.messageId,
-      draft.threadId
+      draft.threadId,
     );
 
     // Update draft status in DB
@@ -366,4 +380,3 @@ export const sendDraft: RequestHandler = async (req, res) => {
     res.status(500).json({ error: "Failed to send email" });
   }
 };
-

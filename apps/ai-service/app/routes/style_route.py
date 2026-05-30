@@ -63,7 +63,6 @@ class StyleProfileResponse(BaseModel):
     emailCount: int
     promptVersion: str
     styleProfile: dict   # Json column — already a dict from Prisma
-    updatedAt: str
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +112,8 @@ async def analyse_style(body: AnalyseStyleRequest) -> StyleProfileResponse:
         )
 
     return StyleProfileResponse(
-        userId=style_row.userId,
-        emailCount=style_row.emailCount,
-        promptVersion=style_row.promptVersion,
-        styleProfile=style_row.styleProfile,   # dict directly from Json column
-        updatedAt=style_row.updatedAt.isoformat(),
+        userId=style_row["user_id"],
+        emailCount=style_row["email_count"],
+        promptVersion=style_row["prompt_version"],
+        styleProfile=style_row["style_profile"],   # dict directly from Json column
     )

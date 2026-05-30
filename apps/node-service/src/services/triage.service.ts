@@ -7,7 +7,7 @@ export async function triageEmailForDraftGeneration(
   subject: string,
   body: string,
   senderEmail: string,
-): Promise<{ needReply: boolean; reason?: string }> {
+): Promise<{ needReply: boolean; reason?: string,priority?: "high" | "medium" | "low" }> {
   const aiRes = await fetch(`${process.env.AI_SERVICE_URL}/classify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -30,13 +30,20 @@ export async function triageEmailForDraftGeneration(
     }
 
     const data = (await aiRes.json()) as {
-        needReply: boolean | string;
+        needsReply: boolean | string;
         reason?: string;
+        priority?: "high" | "medium" | "low";
     }
 
+    log.info(
+        { needReply: data.needsReply, reason: data.reason, priority: data.priority },
+        "Triage result from AI service",
+    );
+
     return {
-        needReply: data.needReply === "True" || data.needReply === true,
+        needReply: data.needsReply === "True" || data.needsReply === true,
         reason: data.reason,
+        priority: data.priority || "low",
     };
 
 }
