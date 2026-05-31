@@ -73,8 +73,8 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-geist-mono)", "monospace"],
+        sans: ["Inter", "Segoe UI", "system-ui", "sans-serif"],
+        mono: ["Roboto Mono", "Consolas", "monospace"],
       },
       boxShadow: {
         card: "0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.4)",

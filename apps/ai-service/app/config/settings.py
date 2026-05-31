@@ -54,6 +54,10 @@ class Settings(BaseSettings):
 
     # App
     log_level: str = Field(default="INFO")
+    log_to_file: bool = Field(default=True)
+    log_dir: str = Field(default="/var/log/draftly/ai-service")
+    log_retention_days: int = Field(default=14)
+    log_prune_interval_seconds: int = Field(default=21600)
     prompt_version: str = Field(
         default="v1", description="Active prompt version for audit/A-B testing"
     )

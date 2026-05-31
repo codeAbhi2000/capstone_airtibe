@@ -20,6 +20,7 @@ export function OnboardingWizard() {
     runAnalysis,
     updateTone,
     updateSignature,
+    updateStyleProfile,
     finishOnboarding,
   } = useOnboarding();
 
@@ -43,6 +44,7 @@ export function OnboardingWizard() {
       {step === "style-preview" && styleProfile && (
         <StylePreviewStep
           profile={styleProfile}
+          onProfileChange={updateStyleProfile}
           onContinue={() => goTo("preferences")}
         />
       )}

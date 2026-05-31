@@ -30,6 +30,21 @@ async def create_draft(
     Insert a new EmailDraft row with status='pending'.
     Raises prisma.errors.UniqueViolationError if messageId already exists.
     """
+    existing = await prisma_client.emaildraft.find_first(
+        where={
+            "userId": user_id,
+            "messageId": message_id,
+        }
+    )
+    if existing:
+        logger.info(
+            "draft_duplicate_skipped",
+            draft_id=existing.id,
+            message_id=message_id,
+            user_id=user_id,
+        )
+        return existing
+
     draft = await prisma_client.emaildraft.create(
         data={
             "userId": user_id,
@@ -45,10 +60,10 @@ async def create_draft(
         }
     )
 
-    await prisma_client.user.update({
-        "where": {"id": user_id},
-        "data": {"draftsUsedMonth": {"increment": 1}},
-    })
+    await prisma_client.user.update(
+        where={"id": user_id},
+        data={"draftsUsedMonth": {"increment": 1}},
+    )
 
     logger.info(
         "draft_persisted",

@@ -75,6 +75,7 @@ authRouter.get(
       "profile",
       "email",
       "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
       "https://www.googleapis.com/auth/gmail.send",
     ],
     accessType: "offline",

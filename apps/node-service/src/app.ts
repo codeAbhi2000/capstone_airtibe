@@ -10,6 +10,7 @@ import { usersRouter } from "./routes/users";
 import { emailsRouter } from "./routes/emails";
 import { draftsRouter } from "./routes/drafts";
 import { webhooksRouter } from "./routes/webhooks";
+import { configRouter } from "./routes/config";
 import pinoHttp from "pino-http";
 import logger from "./lib/logger";
 import dotenv from "dotenv";
@@ -107,6 +108,7 @@ app.use(passport.initialize());
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 app.use("/api/auth", authRouter);
+app.use("/api/config", configRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/emails", emailsRouter);
 app.use("/api/drafts", draftsRouter);

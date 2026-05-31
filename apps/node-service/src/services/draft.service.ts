@@ -154,6 +154,24 @@ export async function draftingHandler(
     return;
   }
 
+  const existingDraft = await prisma.emailDraft.findFirst({
+    where: { userId: user.id, messageId },
+    select: { id: true, status: true },
+  });
+
+  if (existingDraft) {
+    log.info(
+      { userId: user.id, messageId, draftId: existingDraft.id },
+      "Draft already exists for message, skipping duplicate queue publish",
+    );
+    await prisma.processedHistory
+      .create({
+        data: { userId: user.id, historyId },
+      })
+      .catch(() => undefined);
+    return;
+  }
+
   log.info(
     { userId: user.id, emailId, messageId },
     "Fetched email details for draft generation filtering started",

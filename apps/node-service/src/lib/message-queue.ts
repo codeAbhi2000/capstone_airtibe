@@ -3,7 +3,7 @@ import { createLogger } from "./logger";
 
 const log = createLogger("message-queue");
 
-let connection: amqp.Connection | null = null;
+let connection: any = null;
 let channel: amqp.Channel | null = null;
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost";
@@ -34,15 +34,19 @@ export async function connectMessageQueue(): Promise<void> {
   try {
     connection = await amqp.connect(RABBITMQ_URL);
     channel = await connection?.createChannel();
+    const activeChannel = channel;
+    if (!activeChannel) {
+      throw new Error("RabbitMQ channel was not created");
+    }
 
     log.info("Connected to RabbitMQ");
 
     // Declare exchange (topic type for flexible routing)
-    await channel.assertExchange(EXCHANGE_NAME, "topic", { durable: true });
+    await activeChannel.assertExchange(EXCHANGE_NAME, "topic", { durable: true });
     log.info({ exchange: EXCHANGE_NAME }, "Exchange declared");
 
     // Declare queue
-    await channel.assertQueue(QUEUE_NAME, { 
+    await activeChannel.assertQueue(QUEUE_NAME, { 
         
         durable: true,
     arguments: {
@@ -53,17 +57,17 @@ export async function connectMessageQueue(): Promise<void> {
     log.info({ queue: QUEUE_NAME }, "Queue declared");
 
     // Bind queue to exchange
-    await channel.bindQueue(QUEUE_NAME, EXCHANGE_NAME, ROUTING_KEY);
+    await activeChannel.bindQueue(QUEUE_NAME, EXCHANGE_NAME, ROUTING_KEY);
     log.info(
       { queue: QUEUE_NAME, exchange: EXCHANGE_NAME, key: ROUTING_KEY },
       "Queue bound to exchange",
     );
 
     // Set prefetch to process one message at a time
-    await channel.prefetch(1);
+    await activeChannel.prefetch(1);
 
     // Handle connection errors
-    connection.on("error", (err) => {
+    connection.on("error", (err: unknown) => {
       log.error({ err }, "RabbitMQ connection error");
       connection = null;
       channel = null;

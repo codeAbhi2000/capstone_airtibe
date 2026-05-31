@@ -2,13 +2,21 @@ import { DraftStatus, Priority } from "../generated/prisma/client";
 import { RequestHandler } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
-import { PLAN_LIMITS } from "@draftly/shared";
+import { APP_CONFIG } from "../config/appConfig";
 import { generateAIDraftCall } from "../services/draft.service";
-import { fetchIncomingEmail, sendReplyEmail } from "../services/gmail.service";
+import {
+  createThreadedGmailDraft,
+  fetchIncomingEmail,
+  sendReplyEmail,
+} from "../services/gmail.service";
 import { getGmailClient } from "../lib/gmail-client";
 import { createLogger } from "../lib/logger";
 
 const log = createLogger("drafts.controller");
+
+function isDraftLocked(status: DraftStatus) {
+  return status === DraftStatus.approved || status === DraftStatus.sent;
+}
 
 export const listDrafts: RequestHandler = async (req, res) => {
   const authReq = req as AuthRequest;
@@ -32,7 +40,7 @@ export const listDrafts: RequestHandler = async (req, res) => {
         ...(priority && { priority }),
       },
       orderBy: { createdAt: "desc" },
-      take: Math.min(parseInt(limit), 100),
+      take: Math.min(parseInt(limit) * 2, 200),
       skip: parseInt(offset),
       select: {
         id: true,
@@ -49,11 +57,25 @@ export const listDrafts: RequestHandler = async (req, res) => {
       },
     });
 
-    res.json({ drafts });
+    const uniqueDrafts =
+      status === DraftStatus.pending
+        ? uniqueByMessageId(drafts).slice(0, Math.min(parseInt(limit), 100))
+        : drafts.slice(0, Math.min(parseInt(limit), 100));
+
+    res.json({ drafts: uniqueDrafts });
   } catch {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
+function uniqueByMessageId<T extends { messageId: string }>(drafts: T[]) {
+  const seen = new Set<string>();
+  return drafts.filter((draft) => {
+    if (seen.has(draft.messageId)) return false;
+    seen.add(draft.messageId);
+    return true;
+  });
+}
 
 export const getDraft: RequestHandler = async (req, res) => {
   const authReq = req as AuthRequest;
@@ -87,6 +109,11 @@ export const updateDraft: RequestHandler = async (req, res) => {
 
     if (!existing) {
       res.status(404).json({ error: "Draft not found" });
+      return;
+    }
+
+    if (isDraftLocked(existing.status)) {
+      res.status(409).json({ error: "Approved or sent drafts cannot be changed" });
       return;
     }
 
@@ -128,6 +155,25 @@ export const generateDraft: RequestHandler = async (req, res) => {
       return;
     }
 
+    const existingDraft = await prisma.emailDraft.findFirst({
+      where: { userId, messageId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingDraft) {
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          draftId: existingDraft.id,
+          action: "generate_duplicate_skipped",
+          gmailMessageId: messageId,
+          metadata: { tone, additionalInstruction },
+        },
+      });
+      res.status(200).json({ draft: existingDraft, duplicate: true });
+      return;
+    }
+
     // 1. Verify and enforce free plan limits
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -139,7 +185,7 @@ export const generateDraft: RequestHandler = async (req, res) => {
       return;
     }
 
-    const limits = PLAN_LIMITS[user.plan as "free" | "paid"];
+    const limits = APP_CONFIG.plans[user.plan as "free" | "paid"];
     if (
       limits.draftsPerMonth !== null &&
       user.draftsUsedMonth >= limits.draftsPerMonth
@@ -175,37 +221,38 @@ export const generateDraft: RequestHandler = async (req, res) => {
       additionalInstruction,
     );
 
-    // 4. Save to Database
-    const draft = await prisma.emailDraft.create({
-      data: {
-        userId,
-        messageId,
-        threadId: emailDetails.threadId,
-        subject: emailDetails.subject,
-        fromEmail: emailDetails.fromEmail,
-        status: DraftStatus.pending,
-        priority: Priority.medium,
-        aiDraft: aiDraftText,
-        finalDraft: aiDraftText,
-        suggestedEdits: [],
-      },
-    });
+    const draft = await prisma.$transaction(async (tx) => {
+      const createdDraft = await tx.emailDraft.create({
+        data: {
+          userId,
+          messageId,
+          threadId: emailDetails.threadId,
+          subject: emailDetails.subject,
+          fromEmail: emailDetails.fromEmail,
+          status: DraftStatus.pending,
+          priority: Priority.medium,
+          aiDraft: aiDraftText,
+          finalDraft: aiDraftText,
+          suggestedEdits: [],
+        },
+      });
 
-    // 5. Increment draft usage count
-    await prisma.user.update({
-      where: { id: userId },
-      data: { draftsUsedMonth: { increment: 1 } },
-    });
+      await tx.user.update({
+        where: { id: userId },
+        data: { draftsUsedMonth: { increment: 1 } },
+      });
 
-    // 6. Create Audit Log
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        draftId: draft.id,
-        action: "generated",
-        gmailMessageId: messageId,
-        metadata: { tone: finalTone, additionalInstruction },
-      },
+      await tx.auditLog.create({
+        data: {
+          userId,
+          draftId: createdDraft.id,
+          action: "generated",
+          gmailMessageId: messageId,
+          metadata: { tone: finalTone, additionalInstruction },
+        },
+      });
+
+      return createdDraft;
     });
 
     res.status(201).json({ draft });
@@ -217,9 +264,10 @@ export const generateDraft: RequestHandler = async (req, res) => {
 
 export const approveDraft: RequestHandler = async (req, res) => {
   const authReq = req as AuthRequest;
+  const userId = authReq.user!.id;
   try {
     const existing = await prisma.emailDraft.findFirst({
-      where: { id: req.params.id as string, userId: authReq.user!.id },
+      where: { id: req.params.id as string, userId },
     });
 
     if (!existing) {
@@ -227,23 +275,153 @@ export const approveDraft: RequestHandler = async (req, res) => {
       return;
     }
 
+    if (existing.status === DraftStatus.approved) {
+      res.json({ draft: existing, alreadyApproved: true });
+      return;
+    }
+
+    if (existing.status === DraftStatus.sent) {
+      res.status(409).json({ error: "Sent drafts cannot be approved again" });
+      return;
+    }
+
+    const emailContent = existing.finalDraft || existing.aiDraft || "";
+    if (!emailContent.trim()) {
+      res.status(400).json({ error: "Draft content is empty" });
+      return;
+    }
+
+    const gmailDraft = await createThreadedGmailDraft(userId, {
+      to: existing.fromEmail || "",
+      subject: existing.subject || "Reply",
+      body: emailContent,
+      threadId: existing.threadId,
+      messageId: existing.messageId,
+    });
+
     const draft = await prisma.emailDraft.update({
       where: { id: req.params.id as string },
-      data: { status: DraftStatus.approved },
+      data: {
+        finalDraft: emailContent,
+        status: DraftStatus.approved,
+      },
     });
 
     await prisma.auditLog.create({
       data: {
-        userId: authReq.user!.id,
+        userId,
         draftId: draft.id,
         action: "approved",
         gmailMessageId: draft.messageId,
+        metadata: {
+          gmailDraftId: gmailDraft.id,
+          gmailDraftMessageId: gmailDraft.message?.id,
+          gmailDraftThreadId: gmailDraft.message?.threadId,
+        },
+      },
+    });
+
+    res.json({ draft, gmailDraft });
+  } catch (err) {
+    log.error({ err }, "Error approving draft and creating Gmail draft");
+    res.status(500).json({ error: "Failed to create Gmail draft" });
+  }
+};
+
+export const rewriteDraft: RequestHandler = async (req, res) => {
+  const authReq = req as AuthRequest;
+  const userId = authReq.user!.id;
+  const { instruction, finalDraft } = req.body as {
+    instruction?: string;
+    finalDraft?: string;
+  };
+
+  try {
+    if (!instruction?.trim()) {
+      res.status(400).json({ error: "instruction is required" });
+      return;
+    }
+
+    const existing = await prisma.emailDraft.findFirst({
+      where: { id: req.params.id as string, userId },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: "Draft not found" });
+      return;
+    }
+
+    if (isDraftLocked(existing.status)) {
+      res.status(409).json({ error: "Approved or sent drafts cannot be rewritten" });
+      return;
+    }
+
+    if (finalDraft !== undefined) {
+      await prisma.emailDraft.update({
+        where: { id: existing.id },
+        data: {
+          aiDraft: finalDraft,
+          finalDraft,
+          status: DraftStatus.edited,
+        },
+      });
+    }
+
+    const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    const aiRes = await fetch(`${aiServiceUrl}/drafts/${existing.id}/rewrite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction }),
+    });
+
+    if (!aiRes.ok) {
+      const body = await aiRes.text().catch(() => "");
+      log.warn(
+        { status: aiRes.status, body, draftId: existing.id },
+        "AI rewrite service returned non-OK status",
+      );
+      res.status(502).json({ error: "AI rewrite failed" });
+      return;
+    }
+
+    const aiDraft = (await aiRes.json()) as {
+      aiDraft?: string;
+      rewriteCount?: number;
+      promptVersion?: string;
+    };
+
+    const rewrittenText = aiDraft.aiDraft;
+    if (!rewrittenText?.trim()) {
+      res.status(502).json({ error: "AI rewrite returned empty draft" });
+      return;
+    }
+
+    const draft = await prisma.emailDraft.update({
+      where: { id: existing.id },
+      data: {
+        finalDraft: rewrittenText,
+        status: DraftStatus.pending,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        draftId: draft.id,
+        action: "rewritten",
+        gmailMessageId: draft.messageId,
+        metadata: {
+          instruction,
+          rewriteCount: aiDraft.rewriteCount,
+          promptVersion: aiDraft.promptVersion,
+        },
       },
     });
 
     res.json({ draft });
-  } catch {
-    res.status(500).json({ error: "Internal server error" });
+  } catch (err) {
+    log.error({ err }, "Error rewriting draft");
+    res.status(500).json({ error: "Failed to rewrite draft" });
   }
 };
 
@@ -265,6 +443,11 @@ export const editDraft: RequestHandler = async (req, res) => {
 
     if (!existing) {
       res.status(404).json({ error: "Draft not found" });
+      return;
+    }
+
+    if (isDraftLocked(existing.status)) {
+      res.status(409).json({ error: "Approved or sent drafts cannot be edited" });
       return;
     }
 
@@ -300,6 +483,11 @@ export const rejectDraft: RequestHandler = async (req, res) => {
 
     if (!existing) {
       res.status(404).json({ error: "Draft not found" });
+      return;
+    }
+
+    if (isDraftLocked(existing.status)) {
+      res.status(409).json({ error: "Approved or sent drafts cannot be rejected" });
       return;
     }
 
@@ -339,6 +527,13 @@ export const sendDraft: RequestHandler = async (req, res) => {
 
     if (draft.status === DraftStatus.sent) {
       res.status(400).json({ error: "Draft has already been sent" });
+      return;
+    }
+
+    if (draft.status === DraftStatus.approved) {
+      res.status(409).json({
+        error: "Approved drafts are already saved in Gmail Drafts and cannot be sent from Draftly",
+      });
       return;
     }
 

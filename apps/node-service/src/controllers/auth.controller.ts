@@ -48,6 +48,11 @@ export const getCurrentUser: RequestHandler = (req, res) => {
 };
 
 export const logout: RequestHandler = (_req, res) => {
-  res.clearCookie("draftly_token", { path: "/" });
+  res.clearCookie("draftly_token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+  });
   res.json({ message: "Logged out successfully" });
 };

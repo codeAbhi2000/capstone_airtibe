@@ -2,7 +2,7 @@ import { RequestHandler } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { fetchSentEmails } from "../services/gmail.service";
-import { PLAN_LIMITS } from "@draftly/shared";
+import { APP_CONFIG } from "../config/appConfig";
 import { createLogger } from "../lib/logger";
 
 const log = createLogger("users.controller");
@@ -30,7 +30,6 @@ export const getUserProfile: RequestHandler = async (req, res) => {
         onboardingAt: true,
         preferences: true,
         createdAt: true,
-        limi
       },
     });
 
@@ -97,7 +96,7 @@ export const getUserUsage: RequestHandler = async (req, res) => {
     }
 
     const planName = user.plan as "free" | "paid";
-    const limits = PLAN_LIMITS[planName];
+    const limits = APP_CONFIG.plans[planName];
     const draftsLimit = limits.draftsPerMonth;
 
     const billingPeriodStart = user.billingPeriodStart;
@@ -180,24 +179,60 @@ export const completeOnboarding: RequestHandler = async (req, res) => {
       ...currentPreferences,
       ...(preferences && preferences),
     };
+    const styleProfile = updatedPreferences.styleProfile as
+      | Record<string, unknown>
+      | undefined;
 
-    const user = await prisma.user.update({
-      where: { id: authReq.user!.id },
-      data: {
-        onboardingComplete: true,
-        onboardingAt: new Date(),
-        preferences: updatedPreferences as any,
-        profileReviewedAt: new Date(), 
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        image: true,
-        plan: true,
-        onboardingComplete: true,
-        preferences: true,
-      },
+    const user = await prisma.$transaction(async (tx) => {
+      const updatedUser = await tx.user.update({
+        where: { id: authReq.user!.id },
+        data: {
+          onboardingComplete: true,
+          onboardingAt: new Date(),
+          preferences: updatedPreferences as any,
+          profileReviewedAt: new Date(),
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          image: true,
+          plan: true,
+          onboardingComplete: true,
+          onboardingAt: true,
+          profileReviewedAt: true,
+          preferences: true,
+        },
+      });
+
+      if (styleProfile && Object.keys(styleProfile).length > 0) {
+        await tx.userStyle.upsert({
+          where: { userId: authReq.user!.id },
+          create: {
+            userId: authReq.user!.id,
+            styleProfile: styleProfile as any,
+            emailCount: APP_CONFIG.onboarding.sentEmailsToAnalyze,
+            promptVersion: "onboarding-review-v1",
+          },
+          update: {
+            styleProfile: styleProfile as any,
+            emailCount: APP_CONFIG.onboarding.sentEmailsToAnalyze,
+            promptVersion: "onboarding-review-v1",
+          },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId: authReq.user!.id,
+          action: "onboarding_completed",
+          metadata: {
+            hasStyleProfile: Boolean(styleProfile),
+          },
+        },
+      });
+
+      return updatedUser;
     });
 
     res.json({ success: true, user });
@@ -214,7 +249,10 @@ export const analyseSentEmails: RequestHandler = async (req, res) => {
 
     let sentEmails: Array<{ body: string }> = [];
     try {
-      sentEmails = await fetchSentEmails(userId, 4);
+      sentEmails = await fetchSentEmails(
+        userId,
+        APP_CONFIG.onboarding.sentEmailsToAnalyze,
+      );
     } catch (err) {
       log.warn(
         { err },

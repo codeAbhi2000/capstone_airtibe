@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   analyzeWritingStyle,
   completeOnboarding,
+  getCurrentUser,
 } from "@/lib/api";
+import { saveClientSession } from "@/lib/auth";
 import type {
   OnboardingPreferences,
   StyleProfile,
@@ -32,6 +34,7 @@ export function useOnboarding() {
   const [preferences, setPreferences] = useState<OnboardingPreferences>({
     defaultTone: "friendly",
     signature: "",
+    styleProfile: undefined,
   });
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -41,7 +44,11 @@ export function useOnboarding() {
   const stepIndex = STEPS.indexOf(step);
   const totalSteps = STEPS.length;
 
-  const baseURL = process.env.NEXT_PUBLIC_NODE_SERVICE_URL || "http://localhost:4000";
+  useEffect(() => {
+    getCurrentUser()
+      .then(saveClientSession)
+      .catch(() => undefined);
+  }, []);
 
   const goTo = useCallback((next: OnboardingStep) => {
     setError(null);
@@ -54,8 +61,6 @@ export function useOnboarding() {
     setError(null);
     goTo("analyze");
 
-    
-
     const progressInterval = setInterval(() => {
       setAnalyzeProgress((p) => Math.min(p + 4, 92));
     }, 120);
@@ -63,6 +68,12 @@ export function useOnboarding() {
     try {
       const profile = await analyzeWritingStyle();
       setStyleProfile(profile);
+      const detectedTone = normalizeTone(profile.tone);
+      setPreferences((prev) => ({
+        ...prev,
+        ...(detectedTone && { defaultTone: detectedTone }),
+        styleProfile: profile,
+      }));
       setAnalyzeProgress(100);
       await delay(400);
       goTo("style-preview");
@@ -83,11 +94,20 @@ export function useOnboarding() {
     setPreferences((prev) => ({ ...prev, signature }));
   }, []);
 
+  const updateStyleProfile = useCallback((updates: Partial<StyleProfile>) => {
+    setStyleProfile((current) => {
+      const next = { ...(current ?? {}), ...updates };
+      setPreferences((prev) => ({ ...prev, styleProfile: next }));
+      return next;
+    });
+  }, []);
+
   const finishOnboarding = useCallback(async () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      await completeOnboarding(preferences);
+      const user = await completeOnboarding(preferences);
+      saveClientSession(user);
       goTo("complete");
     } catch {
       setError("Something went wrong saving your preferences. Please try again.");
@@ -110,10 +130,24 @@ export function useOnboarding() {
     runAnalysis,
     updateTone,
     updateSignature,
+    updateStyleProfile,
     finishOnboarding,
   };
 }
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeTone(tone: unknown): TonePreference | null {
+  if (
+    tone === "friendly" ||
+    tone === "formal" ||
+    tone === "concise" ||
+    tone === "semi-formal"
+  ) {
+    return tone;
+  }
+
+  return null;
 }

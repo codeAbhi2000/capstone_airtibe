@@ -1,0 +1,131 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-draftly}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-draftly}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-draftly}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  ai-service:
+    build:
+      context: ./apps/ai-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-anthropic/claude-sonnet-4-20250514}
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-draftly}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-draftly}:${RABBITMQ_DEFAULT_PASS:-draftly}@rabbitmq:5672/
+      LOG_TO_FILE: "true"
+      LOG_DIR: /var/log/draftly/ai-service
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      LOG_PRUNE_INTERVAL_SECONDS: ${LOG_PRUNE_INTERVAL_SECONDS:-21600}
+    ports:
+      - "${AI_SERVICE_PORT:-8000}:8000"
+    volumes:
+      - ai_logs:/var/log/draftly/ai-service
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  node-service:
+    build:
+      context: .
+      dockerfile: apps/node-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-draftly}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-draftly}:${RABBITMQ_DEFAULT_PASS:-draftly}@rabbitmq:5672
+      AI_SERVICE_URL: http://ai-service:8000
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NODE_SERVICE_URL: ${NODE_SERVICE_URL:-http://localhost:4000}
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-session-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-32-byte-hex-key-for-aes-256-gcm}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GMAIL_WATCH_TOPIC: ${GMAIL_WATCH_TOPIC:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:3000/settings?upgrade=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:3000/settings?upgrade=cancelled}
+      LOG_TO_FILE: "true"
+      LOG_DIR: /var/log/draftly/node-service
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      LOG_PRUNE_INTERVAL_MS: ${LOG_PRUNE_INTERVAL_MS:-21600000}
+    ports:
+      - "${NODE_SERVICE_PORT:-4000}:4000"
+    volumes:
+      - node_logs:/var/log/draftly/node-service
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  node_logs:
+  ai_logs:

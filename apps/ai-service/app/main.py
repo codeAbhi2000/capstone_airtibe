@@ -94,12 +94,16 @@ app.add_middleware(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print("=== 422 VALIDATION ERROR ===")
-    print("Body:", await request.body())
-    print("Errors:", exc.errors())
+    body = await request.body()
+    logger.warning(
+        "validation_error",
+        path=str(request.url.path),
+        body=body.decode(errors="replace")[:2000],
+        errors=exc.errors(),
+    )
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": str(await request.body())}
+        content={"detail": exc.errors(), "body": str(body)}
     )
 
 app.include_router(classify_router)
@@ -122,5 +126,6 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),
+        access_log=False,
         reload=False,
     )

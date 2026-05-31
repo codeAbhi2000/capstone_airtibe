@@ -13,6 +13,11 @@ interface PreferencesStepProps {
 
 const TONES: { value: TonePreference; label: string; description: string }[] = [
   {
+    value: "semi-formal",
+    label: "Semi-formal",
+    description: "Clear, polite, lightly professional",
+  },
+  {
     value: "friendly",
     label: "Friendly",
     description: "Warm, approachable, conversational",

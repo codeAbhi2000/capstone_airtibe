@@ -193,3 +193,55 @@ export async function setupGmailWatch(userId: string) {
     throw error;
   }
 }
+
+interface GmailDraftMessage {
+  to: string;
+  subject: string;
+  body: string;
+  threadId: string;
+  messageId: string;
+}
+
+
+export async function createThreadedGmailDraft(
+  userId: string,
+  { to, subject, body, threadId, messageId }: GmailDraftMessage,
+) {
+  const gmail = await getGmailClient(userId); // handles token refresh automatically
+
+  const cleanSubject = subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`;
+  const utf8Subject = `=?utf-8?B?${Buffer.from(cleanSubject).toString('base64')}?=`;
+
+  const mimeLines = [
+    `To: ${to}`,
+    `Subject: ${utf8Subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset=UTF-8`,
+  ];
+
+  // ✅ These two headers tell Gmail to chain into the existing thread
+  if (messageId) {
+    mimeLines.push(`In-Reply-To: ${messageId}`);
+    mimeLines.push(`References: ${messageId}`);
+  }
+
+  mimeLines.push('', body); // blank line separates headers from body
+
+  const raw = Buffer.from(mimeLines.join('\n'))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const res = await gmail.users.drafts.create({
+    userId: 'me',
+    requestBody: {
+      message: {
+        raw,
+        threadId, // ✅ attach to the existing thread
+      },
+    },
+  });
+
+  return res.data;
+}

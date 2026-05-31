@@ -1,6 +1,7 @@
 export default function LoginPage() {
-  const apiUrl =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+  const apiUrl = withApiPrefix(
+    assertNodeServiceUrl(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"),
+  );
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6">
@@ -88,4 +89,24 @@ export default function LoginPage() {
       </div>
     </div>
   );
+}
+
+function withApiPrefix(url: string) {
+  const trimmed = url.replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+}
+
+function assertNodeServiceUrl(url: string) {
+  const normalized = url.toLowerCase();
+  if (
+    normalized.includes("ai-service") ||
+    normalized.includes("localhost:8000") ||
+    normalized.includes("127.0.0.1:8000")
+  ) {
+    throw new Error(
+      "Frontend API URL must point to the Node service, not the AI service.",
+    );
+  }
+
+  return url;
 }
